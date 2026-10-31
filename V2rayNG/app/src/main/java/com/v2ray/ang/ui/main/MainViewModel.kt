@@ -20,6 +20,7 @@ import com.v2ray.ang.extension.matchesPattern
 import com.v2ray.ang.extension.moveItem
 import com.v2ray.ang.handler.SubscriptionInfoParser
 import com.v2ray.ang.ui.base.BaseViewModel
+import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -331,6 +332,33 @@ class MainViewModel(
                 throw cancelled
             } catch (error: Exception) {
                 LogUtil.e(AppConfig.TAG, "Main background initialization failed", error)
+            }
+        }
+        updateSubscriptionsOnLaunch()
+    }
+
+    private var launchUpdateStarted = false
+
+    /**
+     * Refreshes every subscription link once per app start (on by default, can be turned off in
+     * the subscription update dialog). Silent: no toast, the cards just show the new data.
+     */
+    private fun updateSubscriptionsOnLaunch() {
+        if (launchUpdateStarted) return
+        launchUpdateStarted = true
+        if (!MmkvManager.decodeSettingsBool(AppConfig.PREF_UPDATE_SUBSCRIPTIONS_ON_LAUNCH, true)) return
+        viewModelScope.launch(ioDispatcher) {
+            try {
+                initialPageReady.await()
+                val result = dataSource.updateConfigViaSubAll()
+                if (result.configCount > 0) {
+                    setupGroupTab(forceRefresh = true)
+                    refreshSelectedGuid()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                LogUtil.e(AppConfig.TAG, "Subscription update on launch failed", error)
             }
         }
     }

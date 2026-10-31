@@ -9,8 +9,6 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.calculateEndPadding
-import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,15 +32,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
@@ -109,21 +102,7 @@ fun GroupPagerPage(
             remove = onRemoveServer,
         )
     }
-    // The box floats over the list (the list scrolls underneath it), so the list is padded by the box height.
-    val density = LocalDensity.current
-    val layoutDirection = LocalLayoutDirection.current
-    var infoHeightPx by remember { mutableIntStateOf(0) }
-    val listPadding = if (usageInfo == null) {
-        contentPadding
-    } else {
-        PaddingValues(
-            start = contentPadding.calculateStartPadding(layoutDirection),
-            top = contentPadding.calculateTopPadding() + with(density) { infoHeightPx.toDp() },
-            end = contentPadding.calculateEndPadding(layoutDirection),
-            bottom = contentPadding.calculateBottomPadding()
-        )
-    }
-
+    // A subscription with account info shows one combined card per config (info + config in one).
     Box(Modifier.fillMaxSize()) {
         ServerListPage(
             rows = groupState.rows,
@@ -132,6 +111,7 @@ fun GroupPagerPage(
             canReorder = canReorder,
             doubleColumnDisplay = doubleColumnDisplay,
             groupId = groupId,
+            usageInfo = usageInfo,
             lazyListStates = lazyListStates,
             lazyGridStates = lazyGridStates,
             actions = actions,
@@ -139,19 +119,8 @@ fun GroupPagerPage(
             onMoveServer = { fromIndex, toIndex ->
                 mainViewModel.moveServer(groupId, fromIndex, toIndex)
             },
-            contentPadding = listPadding
+            contentPadding = contentPadding
         )
-        if (usageInfo != null) {
-            SubscriptionInfoCard(
-                info = usageInfo,
-                fallbackTitle = groupTitle,
-                onOpenLink = onOpenLink,
-                onRefresh = { mainViewModel.onAction(MainAction.UpdateGroupSubscription(groupId)) },
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .onSizeChanged { infoHeightPx = it.height }
-            )
-        }
     }
 }
 
@@ -171,6 +140,7 @@ private fun ServerListPage(
     canReorder: Boolean,
     doubleColumnDisplay: Boolean,
     groupId: String,
+    usageInfo: SubscriptionUsageInfo?,
     lazyListStates: MutableMap<String, LazyListState>,
     lazyGridStates: MutableMap<String, LazyGridState>,
     actions: ServerRowActions,
@@ -178,7 +148,8 @@ private fun ServerListPage(
     onMoveServer: (Int, Int) -> Unit,
     contentPadding: PaddingValues
 ) {
-    if (doubleColumnDisplay) {
+    // The combined subscription card needs the full width, so it always uses the single column list.
+    if (doubleColumnDisplay && usageInfo == null) {
         val gridState = remember(groupId) {
             lazyGridStates.getOrPut(groupId) { LazyGridState() }
         }
@@ -253,19 +224,23 @@ private fun ServerListPage(
                         ) {
                             ServerItemRow(
                                 row = row,
+                                groupId = groupId,
+                                usageInfo = usageInfo,
                                 isSelected = row.guid == selectedGuid,
                                 actions = actions
                             )
                         }
-                        ItemDivider()
+                        if (usageInfo == null) ItemDivider()
                     }
                 } else {
                     ServerItemRow(
                         row = row,
+                        groupId = groupId,
+                        usageInfo = usageInfo,
                         isSelected = row.guid == selectedGuid,
                         actions = actions
                     )
-                    ItemDivider()
+                    if (usageInfo == null) ItemDivider()
                 }
             }
         }
@@ -307,15 +282,30 @@ private fun LocateTargetEffect(
 @Composable
 private fun ServerItemRow(
     row: ServerRowUiModel,
+    groupId: String,
+    usageInfo: SubscriptionUsageInfo?,
     isSelected: Boolean,
     actions: ServerRowActions
 ) {
-    ServerListItem(
-        row = row,
-        isSelected = isSelected,
-        doubleColumnDisplay = false,
-        actions = actions
-    )
+    if (usageInfo != null) {
+        SubscriptionServerCard(
+            row = row,
+            groupId = groupId,
+            info = usageInfo,
+            isSelected = isSelected,
+            onSelect = { actions.select(row.guid) },
+            onShare = { actions.share(row.guid, row.profile) },
+            onEdit = { actions.edit(row.guid, row.profile) },
+            onDelete = { actions.remove(row.guid, row.remarks) },
+        )
+    } else {
+        ServerListItem(
+            row = row,
+            isSelected = isSelected,
+            doubleColumnDisplay = false,
+            actions = actions
+        )
+    }
 }
 
 @Composable
