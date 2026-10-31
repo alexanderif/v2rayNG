@@ -26,6 +26,7 @@ import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.QRCodeDecoder
+import com.v2ray.ang.util.RemarkCleaner
 import com.v2ray.ang.util.Utils
 import okhttp3.Headers
 import java.net.URI
@@ -427,6 +428,8 @@ object AngConfigManager {
                 if (!matched) return null
             }
 
+            // Traffic and time left are shown on the subscription card, not in the name.
+            config.remarks = RemarkCleaner.clean(config.remarks)
             config.subscriptionId = subid
             config.description = generateDescription(config)
 
@@ -476,7 +479,7 @@ object AngConfigManager {
             }
 
             val url = HttpUtil.toIdnUrl(it.subscription.url)
-            if (!Utils.isValidUrl(url)) {
+            if (!Utils.hasHttpScheme(url) || !Utils.isValidUrl(url)) {
                 return SubscriptionUpdateResult(failureCount = 1)
             }
             if (!it.subscription.allowInsecureUrl) {
