@@ -1,0 +1,203 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        required: false
+        type: string
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: 'recursive'
+          fetch-depth: '0'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '14742923'
+          packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
+
+      - name: Install NDK
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            --channel=0 \
+            --install "ndk;30.0.16248370"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+          sed -i '10i\
+          \
+              ndkVersion = "30.0.16248370"' "$GITHUB_WORKSPACE/V2rayNG/app/build.gradle.kts"
+
+      - name: Restore cached libhevtun
+        id: cache-libhevtun-restore
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/libs
+          key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
+
+      - name: Build libhevtun
+        if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
+        run: |
+          bash compile-hevtun.sh
+
+      - name: Save libhevtun
+        if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/libs
+          key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
+
+      - name: Copy libhevtun
+        run: |
+          cp -r "$GITHUB_WORKSPACE/libs" "$GITHUB_WORKSPACE/V2rayNG/app"
+
+      - name: Fetch AndroidLibXrayLite tag
+        run: |
+          pushd AndroidLibXrayLite
+          CURRENT_TAG=$(git describe --tags --abbrev=0)
+          echo "Current tag in this repo: $CURRENT_TAG"
+          echo "CURRENT_TAG=$CURRENT_TAG" >> "$GITHUB_ENV"
+          popd
+
+      - name: Download libv2ray
+        uses: robinraju/release-downloader@v1.13
+        with:
+          repository: '2dust/AndroidLibXrayLite'
+          tag: ${{ env.CURRENT_TAG }}
+          fileName: 'libv2ray.aar'
+          out-file-path: V2rayNG/app/libs/
+
+      - name: Setup Java
+        uses: actions/setup-java@v6.1.0
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # Restore the persistent Android signing keystore from GitHub Secrets.
+      # The keystore must be PKCS12, with alias "myalias" and the configured passwords.
+      - name: Restore custom Android keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.APP_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.APP_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.APP_KEYSTORE_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          test -n "$KEYSTORE_BASE64" || { echo "APP_KEYSTORE_BASE64 is empty"; exit 1; }
+          test -n "$STORE_PASSWORD" || { echo "APP_KEYSTORE_PASSWORD is empty"; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "APP_KEY_PASSWORD is empty"; exit 1; }
+          test -n "$KEY_ALIAS" || { echo "APP_KEYSTORE_ALIAS is empty"; exit 1; }
+
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/my.p12"
+          test -s "$RUNNER_TEMP/my.p12"
+
+          keytool -list \
+            -keystore "$RUNNER_TEMP/my.p12" \
+            -storetype PKCS12 \
+            -storepass "$STORE_PASSWORD" \
+            -alias "$KEY_ALIAS" >/dev/null
+
+          echo "Custom keystore and alias verified."
+
+      - name: Build APK
+        env:
+          STORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.APP_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.APP_KEYSTORE_ALIAS }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/V2rayNG"
+
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          chmod 755 gradlew
+
+          ./gradlew licenseFdroidReleaseReport
+
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/my.p12" \
+            -Pandroid.injected.signing.store.password="$STORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD" \
+            -Pandroid.injected.signing.store.type=PKCS12
+
+      - name: Upload arm64-v8a APK
+        uses: actions/upload-artifact@v7
+        if: success()
+        with:
+          name: arm64-v8a
+          path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*arm64-v8a*.apk
+
+      - name: Upload armeabi-v7a APK
+        uses: actions/upload-artifact@v7
+        if: success()
+        with:
+          name: armeabi-v7a
+          path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*armeabi-v7a*.apk
+
+      - name: Upload x86 APK
+        uses: actions/upload-artifact@v7
+        if: success()
+        with:
+          name: x86-apk
+          path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*x86*.apk
+
+      - name: Upload universal APK
+        uses: actions/upload-artifact@v7
+        if: success()
+        with:
+          name: universal-apk
+          path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*universal*.apk
+
+  sign-and-release:
+    needs: build
+    runs-on: ubuntu-26.04
+    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+
+    steps:
+      - name: Download APK artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: release
+
+      - name: Sign APK files
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$GPG_PRIVATE_KEY" || { echo "GPG_PRIVATE_KEY is not configured"; exit 1; }
+
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          KEY=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
+          test -n "$KEY"
+
+          mkdir -p release-files
+
+          find release -type f -name '*.apk' -print0 | while IFS= read -r -d '' apk; do
+            cp "$apk" release-files/
+            gpg --batch --yes --local-user "$KEY" --detach-sign \
+              --output "release-files/$(basename "$apk").sig" "$apk"
+          done
+
+          gpg --armor --export "$KEY" > release-files/v2rayN-public-key.asc
+
+      - name: Upload APKs, signatures and public key to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          file: release-files/*
+          tag: ${{ inputs.release_tag }}
+          file_glob: true
+          prerelease: true
