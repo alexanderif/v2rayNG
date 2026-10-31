@@ -81,7 +81,7 @@ class SubEditActivity : BaseComponentActivity() {
             return false
         }
         if (subItem.url.isNotEmpty()) {
-            if (!Utils.isValidUrl(subItem.url)) {
+            if (!Utils.hasHttpScheme(subItem.url) || !Utils.isValidUrl(subItem.url)) {
                 return false
             }
             if (!Utils.isValidSubUrl(subItem.url) && !subItem.allowInsecureUrl) {
@@ -175,7 +175,8 @@ fun SubEditScreen(
                     IconButton(onClick = {
                         val remarksErr = remarks.isBlank()
                         val urlErr = url.isNotEmpty() && (
-                            !Utils.isValidUrl(url) || (!Utils.isValidSubUrl(url) && !allowInsecureUrl)
+                            !Utils.hasHttpScheme(url) ||
+                                !Utils.isValidUrl(url) || (!Utils.isValidSubUrl(url) && !allowInsecureUrl)
                         )
                         val intervalErr = autoUpdate && updateInterval.toLongEx() < AppConfig.SUBSCRIPTION_MIN_INTERVAL_MINUTES
 
@@ -216,7 +217,13 @@ fun SubEditScreen(
                 value = url,
                 onValueChange = { url = it },
                 isError = isUrlError,
-                supportingText = if (isUrlError) stringResource(R.string.toast_invalid_url) else null
+                supportingText = if (isUrlError) {
+                    if (!Utils.hasHttpScheme(url) && url.contains("://")) {
+                        stringResource(R.string.sub_url_is_config_link)
+                    } else {
+                        stringResource(R.string.toast_invalid_url)
+                    }
+                } else null
             )
             FormTextField(stringResource(R.string.sub_setting_user_agent), userAgent, { userAgent = it })
             FormTextField(stringResource(R.string.sub_setting_request_headers), requestHeaders, { requestHeaders = it })
