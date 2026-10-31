@@ -1,28 +1,22 @@
-name: Build APK
+    - name: Build APK
+      env:
+        STORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
+        KEY_PASSWORD: ${{ secrets.APP_KEY_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.APP_KEYSTORE_ALIAS }}
+      run: |
+        cd ${{ github.workspace }}/V2rayNG
 
-on:
-  workflow_dispatch:
-    inputs:
-      release_tag:
-        required: false
-        type: string
-  push:
-    branches:
-      - master
+        echo "sdk.dir=${ANDROID_HOME}" > local.properties
+        chmod 755 gradlew
 
-permissions:
-  contents: write
+        ./gradlew licenseFdroidReleaseReport
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v7
-      with:
-        submodules: 'recursive'
-        fetch-depth: '0'
+        ./gradlew assembleRelease \
+          -Pandroid.injected.signing.store.file="$RUNNER_TEMP/my.p12" \
+          -Pandroid.injected.signing.store.password="$STORE_PASSWORD" \
+          -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+          -Pandroid.injected.signing.key.password="$KEY_PASSWORD" \
+          -Pandroid.injected.signing.store.type=PKCS12
 
     - name: Setup Android SDK
       uses: android-actions/setup-android@v4
