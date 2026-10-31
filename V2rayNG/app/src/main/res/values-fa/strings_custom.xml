@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sub_card_left_suffix">%s مانده</string>
+    <string name="sub_card_days_left_suffix">روز مانده</string>
+    <string name="sub_card_expired">منقضی شده</string>
+    <string name="sub_card_no_expiry">بدون انقضا</string>
+    <string name="sub_unit_b">بایت</string>
+    <string name="sub_unit_kb">کیلو</string>
+    <string name="sub_unit_mb">مگ</string>
+    <string name="sub_unit_gb">گیگ</string>
+    <string name="sub_unit_tb">ترا</string>
+    <string name="sub_period_days">%d روزه</string>
+    <string name="sub_period_month_1">یک ماهه</string>
+    <string name="sub_period_month_2">دو ماهه</string>
+    <string name="sub_period_month_3">سه ماهه</string>
+    <string name="sub_period_month_4">چهار ماهه</string>
+    <string name="sub_period_month_6">شش ماهه</string>
+    <string name="sub_period_year_1">یک ساله</string>
+    <string name="title_pref_update_subscriptions_on_launch">به‌روزرسانی ساب‌ها هنگام ورود به برنامه</string>
+    <string name="summary_pref_update_subscriptions_on_launch">با هر بار باز شدن برنامه، لینک همه اشتراک‌ها به‌روز می‌شود</string>
+</resources>
