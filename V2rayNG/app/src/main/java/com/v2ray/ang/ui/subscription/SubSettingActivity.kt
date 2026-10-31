@@ -285,6 +285,7 @@ fun SubSettingScreen(
     if (showUpdateDialog) {
 
         var updateSubscription by rememberMmkvBool(AppConfig.PREF_UPDATE_SUBSCRIPTION, false)
+        var updateOnLaunch by rememberMmkvBool(AppConfig.PREF_UPDATE_SUBSCRIPTIONS_ON_LAUNCH, true)
         var autoTestAfterUpdateSubscription by rememberMmkvBool(AppConfig.PREF_AUTO_TEST_AFTER_UPDATE_SUBSCRIPTION, false)
         var autoRemoveInvalidAfterTest by rememberMmkvBool(AppConfig.PREF_AUTO_REMOVE_INVALID_AFTER_TEST, false)
         var autoSortAfterTest by rememberMmkvBool(AppConfig.PREF_AUTO_SORT_AFTER_TEST, false)
@@ -293,6 +294,12 @@ fun SubSettingScreen(
             onDismissRequest = { showUpdateDialog = false },
             text = {
                 Column {
+                    SettingsSwitchItem(
+                        title = stringResource(R.string.title_pref_update_subscriptions_on_launch),
+                        summary = stringResource(R.string.summary_pref_update_subscriptions_on_launch),
+                        checked = updateOnLaunch,
+                        onCheckedChange = { updateOnLaunch = it }
+                    )
                     SettingsSwitchItem(
                         title = stringResource(R.string.title_sub_update),
                         checked = updateSubscription,
