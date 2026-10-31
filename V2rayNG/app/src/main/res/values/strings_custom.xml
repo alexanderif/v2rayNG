@@ -18,4 +18,5 @@
     <string name="sub_period_year_1">1 year</string>
     <string name="title_pref_update_subscriptions_on_launch">Update subscriptions on app launch</string>
     <string name="summary_pref_update_subscriptions_on_launch">Refresh all subscription links every time the app is opened</string>
+    <string name="sub_url_is_config_link">This is a config link (vless/vmess/trojan...), not a subscription link. Add it with Import from clipboard instead.</string>
 </resources>
