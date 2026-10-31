@@ -26,6 +26,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
@@ -34,6 +35,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -100,6 +105,26 @@ class MainViewModel(
     private val groupServerFlows = ConcurrentHashMap<String, StateFlow<List<ServersCache>>>()
     private val groupLoadMutexes = ConcurrentHashMap<String, Mutex>()
     private val serverOrderPersistenceJobs = mutableMapOf<String, Job>()
+
+    /** Every subscription (and the default group) with its servers, in display order: the one flat list. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    internal val sections: StateFlow<List<GroupSectionUiModel>> = _uiState
+        .map { state -> state.groups.filter { it.id.isNotEmpty() } }
+        .distinctUntilChanged()
+        .flatMapLatest { groups ->
+            if (groups.isEmpty()) {
+                flowOf(emptyList<GroupSectionUiModel>())
+            } else {
+                combine(groups.map { group -> mutableServerGroupState(group.id) }) { states ->
+                    groups.mapIndexed { index, group -> GroupSectionUiModel(group, states[index]) }
+                }
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
+            initialValue = emptyList(),
+        )
 
     private var setupGroupJob: Job? = null
     private var preloadJob: Job? = null
@@ -202,21 +227,26 @@ class MainViewModel(
         if (pendingTestResults.isEmpty()) return
         if (testRequests.bulk?.id != request.id) return
 
+        // One test run covers the whole list, so a result can belong to any group.
         val updates = cacheMutex.withLock {
             val drained = pendingTestResults.toMap()
             pendingTestResults.clear()
-            groupDataCache[request.groupId]?.let { cached ->
-                groupDataCache[request.groupId] = applyTestDelayResults(cached, drained)
+            groupDataCache.keys.toList().forEach { groupId ->
+                groupDataCache[groupId]?.let { cached ->
+                    groupDataCache[groupId] = applyTestDelayResults(cached, drained)
+                }
             }
             drained
         }
         if (updates.isEmpty()) return
         if (testRequests.bulk?.id != request.id) return
-        mutableServerGroupState(request.groupId).update { current ->
-            current.copy(
-                servers = applyTestDelayResults(current.servers, updates),
-                rows = applyTestDelayResultsToRows(current.rows, updates),
-            )
+        uiState.value.groups.forEach { group ->
+            mutableServerGroupState(group.id).update { current ->
+                current.copy(
+                    servers = applyTestDelayResults(current.servers, updates),
+                    rows = applyTestDelayResultsToRows(current.rows, updates),
+                )
+            }
         }
     }
 
@@ -270,8 +300,11 @@ class MainViewModel(
     private fun mutableServerGroupState(groupId: String): MutableStateFlow<ServerGroupUiState> =
         groupUiFlows.computeIfAbsent(groupId) { MutableStateFlow(ServerGroupUiState()) }
 
+    /** Every server currently shown in the flat list (after the search filter), in display order. */
     private fun currentServers(): List<ServersCache> =
-        mutableServerGroupState(uiState.value.selectedGroupId).value.servers
+        uiState.value.groups
+            .filter { it.id.isNotEmpty() }
+            .flatMap { mutableServerGroupState(it.id).value.servers }
 
     // ---------- Action handler ----------
     fun onAction(action: MainAction) {
@@ -285,7 +318,7 @@ class MainViewModel(
             MainAction.RemoveDuplicateServers -> removeDuplicateServerAsync()
             MainAction.RemoveInvalidServers -> removeInvalidServerAsync()
             MainAction.SortByTestResults -> sortByTestResultsAsync()
-            MainAction.UpdateSubscriptions -> importConfigViaSub(uiState.value.selectedGroupId)
+            MainAction.UpdateSubscriptions -> importConfigViaSub("")
             is MainAction.UpdateGroupSubscription -> importConfigViaSub(action.groupId)
             MainAction.ExportAll -> exportAllAsync()
             is MainAction.SelectGroup -> subscriptionIdChanged(action.groupId)
@@ -483,7 +516,8 @@ class MainViewModel(
                 if (forceRefresh) {
                     cacheMutex.withLock { groupDataCache.clear() }
                 }
-                val groups = dataSource.getSubscriptions().map {
+                // The list is one flat list now, so the optional pseudo "All" group (empty id) is not needed.
+                val groups = dataSource.getSubscriptions().filter { it.guid.isNotEmpty() }.map {
                     GroupMapItem(
                         id = it.guid,
                         remarks = it.subscription.remarks,
@@ -547,8 +581,9 @@ class MainViewModel(
         launchLoading {
             withContext(ioDispatcher) {
                 try {
+                    // New configs always go to the default group, never into a subscription.
                     val (count, countSub) = dataSource.importBatchConfig(
-                        configText, uiState.value.selectedGroupId, true
+                        configText, "", true
                     )
                     when {
                         count > 0 -> {
@@ -613,8 +648,7 @@ class MainViewModel(
         launchLoading {
             withContext(ioDispatcher) {
                 try {
-                    val groupId = uiState.value.selectedGroupId
-                    val list = if (groupId.isEmpty() && keywordFilter.isEmpty()) {
+                    val list = if (keywordFilter.isEmpty()) {
                         dataSource.getServerGuidList("")
                     } else {
                         currentServers().map { it.guid }
@@ -640,7 +674,7 @@ class MainViewModel(
             withContext(ioDispatcher) {
                 try {
                     val count =
-                        if (uiState.value.selectedGroupId.isEmpty() && keywordFilter.isEmpty()) {
+                        if (keywordFilter.isEmpty()) {
                             dataSource.removeAllServer()
                         } else {
                             val guids = currentServers().map { it.guid }
@@ -666,13 +700,16 @@ class MainViewModel(
         launchLoading {
             withContext(ioDispatcher) {
                 try {
-                    val seen = HashSet<ProfileItem>()
                     val duplicates = ArrayList<String>()
-                    currentServers().forEach { server ->
-                        val profile = server.profile
-                        if (!profile.configType.isComplexType()) {
-                            val identity = profile.duplicateIdentity()
-                            if (!seen.add(identity)) duplicates += server.guid
+                    // Duplicates are only looked for inside one group, never across subscriptions.
+                    uiState.value.groups.filter { it.id.isNotEmpty() }.forEach { group ->
+                        val seen = HashSet<ProfileItem>()
+                        mutableServerGroupState(group.id).value.servers.forEach { server ->
+                            val profile = server.profile
+                            if (!profile.configType.isComplexType()) {
+                                val identity = profile.duplicateIdentity()
+                                if (!seen.add(identity)) duplicates += server.guid
+                            }
                         }
                     }
                     duplicates.forEach { dataSource.removeServer(it) }
@@ -709,8 +746,7 @@ class MainViewModel(
     }
 
     private fun removeInvalidServerInternal(): Int {
-        val visibleServersOnly =
-            uiState.value.selectedGroupId.isNotEmpty() || keywordFilter.isNotBlank()
+        val visibleServersOnly = keywordFilter.isNotBlank()
         return if (visibleServersOnly) {
             currentServers().sumOf { server ->
                 dataSource.removeInvalidServerByGuid(server.guid)
@@ -738,12 +774,7 @@ class MainViewModel(
     }
 
     private fun sortByTestResultsInternal() {
-        val subs = if (uiState.value.selectedGroupId.isEmpty()) {
-            dataSource.getSubsList()
-        } else {
-            listOf(uiState.value.selectedGroupId)
-        }
-        subs.forEach { dataSource.sortByTestResultsForSub(it) }
+        dataSource.getSubsList().forEach { dataSource.sortByTestResultsForSub(it) }
     }
 
     fun subscriptionIdChanged(id: String) {
@@ -766,11 +797,7 @@ class MainViewModel(
     }
 
     fun reloadServerList() {
-        val groupId = uiState.value.selectedGroupId
-        selectedGroupLoadJob?.cancel()
-        selectedGroupLoadJob = viewModelScope.launch(ioDispatcher) {
-            updateGroupUi(groupId, loadGroup(groupId, forceRefresh = true))
-        }
+        reloadAllGroups(uiState.value.groups.map { it.id })
     }
 
     fun reloadAllGroups(groupIds: List<String>) {
@@ -865,23 +892,26 @@ class MainViewModel(
 
     fun testAllRealPing(onlyTcp: Boolean = false) {
         cancelAllPing()
-        val groupId = uiState.value.selectedGroupId
+        // The list is one flat list: a test run always covers every group (empty id = all servers).
+        val groupId = ""
         val servers = currentServers()
         if (servers.isEmpty()) {
             return
         }
         val serverGuids = servers.map { it.guid }
-        mutableServerGroupState(groupId).update { current ->
-            current.copy(
-                servers = current.servers.map { server ->
-                    if (server.testDelayMillis == 0L) server
-                    else server.copy(testDelayMillis = 0L)
-                },
-                rows = current.rows.map { row ->
-                    if (row.testDelayMillis == 0L) row
-                    else row.copy(testDelayMillis = 0L)
-                }
-            )
+        uiState.value.groups.forEach { group ->
+            mutableServerGroupState(group.id).update { current ->
+                current.copy(
+                    servers = current.servers.map { server ->
+                        if (server.testDelayMillis == 0L) server
+                        else server.copy(testDelayMillis = 0L)
+                    },
+                    rows = current.rows.map { row ->
+                        if (row.testDelayMillis == 0L) row
+                        else row.copy(testDelayMillis = 0L)
+                    }
+                )
+            }
         }
         val request = testRequests.beginBulk(groupId)
         val message = TestServiceMessage(
@@ -901,10 +931,12 @@ class MainViewModel(
                 dataSource.clearAllTestDelayResults(serverGuids)
                 val resetGuids = serverGuids.toHashSet()
                 cacheMutex.withLock {
-                    groupDataCache[groupId]?.let { cached ->
-                        groupDataCache[groupId] = cached.map { server ->
-                            if (server.guid !in resetGuids || server.testDelayMillis == 0L) server
-                            else server.copy(testDelayMillis = 0L)
+                    groupDataCache.keys.toList().forEach { cachedGroupId ->
+                        groupDataCache[cachedGroupId]?.let { cached ->
+                            groupDataCache[cachedGroupId] = cached.map { server ->
+                                if (server.guid !in resetGuids || server.testDelayMillis == 0L) server
+                                else server.copy(testDelayMillis = 0L)
+                            }
                         }
                     }
                 }
@@ -930,15 +962,30 @@ class MainViewModel(
         if (testRequests.completeBulk(requestId) == null) return
         resetTestStatus()
         viewModelScope.launch(ioDispatcher) {
+            applyAutoActionsAfterTest()
             cacheMutex.withLock { groupDataCache.clear() }
             reloadAllGroups(_uiState.value.groups.map { it.id })
+        }
+    }
+
+    /**
+     * The test service only runs "auto remove invalid" / "auto sort" for a run on one subscription.
+     * A run over the whole list is finished here instead, for every subscription.
+     */
+    private fun applyAutoActionsAfterTest() {
+        if (keywordFilter.isNotEmpty()) return
+        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_AUTO_REMOVE_INVALID_AFTER_TEST, false)) {
+            dataSource.getSubsList().forEach { dataSource.removeInvalidServersInGroup(it) }
+        }
+        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_AUTO_SORT_AFTER_TEST, false)) {
+            dataSource.getSubsList().forEach { dataSource.sortByTestResultsForSub(it) }
         }
     }
 
     fun triggerLocateSelectedServer() {
         val selected = dataSource.getSelectServer() ?: return
         val profile = dataSource.decodeServerConfig(selected) ?: return
-        val groupId = profile.subscriptionId
+        val groupId = profile.subscriptionId.ifEmpty { AppConfig.DEFAULT_SUBSCRIPTION_ID }
         if (_uiState.value.groups.none { it.id == groupId }) return
         viewModelScope.launch(ioDispatcher) {
             updateGroupUi(groupId, loadGroup(groupId))

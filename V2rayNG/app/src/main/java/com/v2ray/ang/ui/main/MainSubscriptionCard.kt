@@ -1,7 +1,15 @@
 package com.v2ray.ang.ui.main
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,7 +32,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +47,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,45 +55,51 @@ import com.v2ray.ang.R
 import com.v2ray.ang.dto.entities.SubscriptionUsageInfo
 import com.v2ray.ang.handler.MmkvManager
 import java.util.Locale
+import kotlin.math.PI
+import kotlin.math.sin
 
 private const val MILLIS_PER_DAY = 86_400_000L
-private const val LOW_FRACTION = 0.1f
-private const val LOW_DAYS = 3L
 private const val BINARY_STEP = 1024.0
 
 /** Common subscription lengths in days; the real length is not published by panels, so it is guessed. */
 private val STANDARD_PERIOD_DAYS = intArrayOf(7, 15, 30, 60, 90, 120, 180, 365)
 
-private val ColorStatusOk = Color(0xFF4CD11F)
+private val ColorStatusOk = Color(0xFF2FD14A)
 private val ColorStatusBad = Color(0xFFE53935)
 private val ColorTraffic = Color(0xFFFF7F0E)
 private val ColorTime = Color(0xFFFFD60A)
 
+// The card is 25% lower than before: every vertical size is 0.75x, horizontal sizes are unchanged.
+
 /**
- * One card per subscription config: name + status + share/edit/delete on top, then the remaining
- * traffic and days on one side and the total traffic / total period bars on the other.
+ * One card per subscription: name + status + share/edit/delete on top, then the remaining traffic
+ * and days on one side and the total traffic / total period bars on the other.
+ *
+ * The bars are always on the left and the figures on the right, in every language.
+ * [info] is null for a subscription whose panel publishes no account information; the card then
+ * only has its header. The action callbacks are null when the card has no config to act on.
  */
 @Composable
 internal fun SubscriptionServerCard(
-    row: ServerRowUiModel,
+    title: String,
     groupId: String,
-    info: SubscriptionUsageInfo,
+    info: SubscriptionUsageInfo?,
     isSelected: Boolean,
     onSelect: () -> Unit,
-    onShare: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
+    onShare: (() -> Unit)?,
+    onEdit: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
 ) {
     val scheme = MaterialTheme.colorScheme
     val now = remember(info) { System.currentTimeMillis() }
-    val model = remember(info) { buildSubscriptionInfoUiModel(info, now) }
+    val model = remember(info) { info?.let { buildSubscriptionInfoUiModel(it, now) } }
 
-    val unlimited = model.totalBytes <= 0L
-    val remainingBytes = (model.totalBytes - model.usedBytes).coerceAtLeast(0L)
-    val trafficFraction = if (unlimited) 1f else remainingBytes.toFloat() / model.totalBytes.toFloat()
+    val unlimited = model == null || model.totalBytes <= 0L
+    val remainingBytes = if (model == null) 0L else (model.totalBytes - model.usedBytes).coerceAtLeast(0L)
+    val trafficFraction = if (unlimited || model == null) 1f else remainingBytes.toFloat() / model.totalBytes.toFloat()
 
-    val expired = model.expired
-    val daysLeft: Long? = model.expireMillis?.let { ((it - now) + MILLIS_PER_DAY - 1) / MILLIS_PER_DAY }
+    val expired = model?.expired == true
+    val daysLeft: Long? = model?.expireMillis?.let { ((it - now) + MILLIS_PER_DAY - 1) / MILLIS_PER_DAY }
     val periodDays: Int? = daysLeft?.let { left ->
         remember(groupId, left) { resolveSubscriptionPeriodDays(groupId, left.toInt()) }
     }
@@ -92,154 +110,254 @@ internal fun SubscriptionServerCard(
         else -> 1f
     }
 
-    val exhausted = !unlimited && remainingBytes == 0L
-    val healthy = !expired && !exhausted
-    val trafficColor = if (!unlimited && trafficFraction <= LOW_FRACTION) ColorStatusBad else ColorTraffic
-    val timeColor = if (expired || (daysLeft != null && daysLeft <= LOW_DAYS)) ColorStatusBad else ColorTime
+    // A bar that has reached its end turns red, and so does the status circle.
+    val trafficEnded = !unlimited && remainingBytes == 0L
+    val timeEnded = expired || (daysLeft != null && daysLeft <= 0L)
+    val healthy = !trafficEnded && !timeEnded
+    val trafficColor = if (trafficEnded) ColorStatusBad else ColorTraffic
+    val timeColor = if (timeEnded) ColorStatusBad else ColorTime
 
     val selectedDescription = if (isSelected) stringResource(R.string.acc_selected_server) else null
+    val naturalDirection = LocalLayoutDirection.current
 
     Surface(
         onClick = onSelect,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 5.dp)
             .semantics {
                 if (selectedDescription != null) stateDescription = selectedDescription
             },
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(21.dp),
         color = scheme.surface,
         shadowElevation = 4.dp,
         border = if (isSelected) BorderStroke(2.dp, scheme.primary) else null,
     ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-            // Header: status dot, name, actions
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+            // Header: status circle, name, actions
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(26.dp)
-                        .clip(CircleShape)
-                        .background(if (healthy) ColorStatusOk else ColorStatusBad)
+                PulseDot(
+                    color = if (healthy) ColorStatusOk else ColorStatusBad,
+                    diameter = 22.dp,
                 )
                 Spacer(Modifier.width(12.dp))
-                Text(
-                    text = row.remarks,
+                FitOneLineText(
+                    text = title,
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.width(8.dp))
-                RoundActionButton(
-                    iconRes = R.drawable.ic_share_24dp,
-                    contentDescription = stringResource(R.string.title_configuration_share),
-                    onClick = onShare,
-                )
-                Spacer(Modifier.width(8.dp))
-                RoundActionButton(
-                    iconRes = R.drawable.ic_edit_24dp,
-                    contentDescription = stringResource(R.string.acc_edit),
-                    onClick = onEdit,
-                )
-                Spacer(Modifier.width(8.dp))
-                RoundActionButton(
-                    iconRes = R.drawable.ic_delete_24dp,
-                    contentDescription = stringResource(R.string.acc_delete),
-                    onClick = onDelete,
-                )
+                if (onShare != null) {
+                    Spacer(Modifier.width(8.dp))
+                    RoundActionButton(
+                        iconRes = R.drawable.ic_share_24dp,
+                        contentDescription = stringResource(R.string.title_configuration_share),
+                        onClick = onShare,
+                    )
+                }
+                if (onEdit != null) {
+                    Spacer(Modifier.width(8.dp))
+                    RoundActionButton(
+                        iconRes = R.drawable.ic_edit_24dp,
+                        contentDescription = stringResource(R.string.acc_edit),
+                        onClick = onEdit,
+                    )
+                }
+                if (onDelete != null) {
+                    Spacer(Modifier.width(8.dp))
+                    RoundActionButton(
+                        iconRes = R.drawable.ic_delete_24dp,
+                        contentDescription = stringResource(R.string.acc_delete),
+                        onClick = onDelete,
+                    )
+                }
             }
 
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.6f))
-            Spacer(Modifier.height(12.dp))
+            if (model != null) {
+                Spacer(Modifier.height(9.dp))
+                HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.6f))
+                Spacer(Modifier.height(9.dp))
 
-            // Body: remaining figures | totals with bars
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Min),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(
-                    Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    // Remaining traffic
-                    if (unlimited) {
-                        StatLine(
-                            iconRes = R.drawable.ic_storage_24dp,
-                            number = stringResource(R.string.sub_info_unlimited),
-                            suffix = "",
-                            color = trafficColor,
-                        )
-                    } else {
-                        val (num, unit) = splitTraffic(remainingBytes)
-                        StatLine(
-                            iconRes = R.drawable.ic_storage_24dp,
-                            number = num,
-                            suffix = stringResource(R.string.sub_card_left_suffix, trafficUnitLabel(unit)),
-                            color = trafficColor,
-                        )
-                    }
-                    // Remaining days
-                    when {
-                        expired -> StatLine(
-                            iconRes = R.drawable.ic_calendar_24dp,
-                            number = stringResource(R.string.sub_card_expired),
-                            suffix = "",
-                            color = ColorStatusBad,
-                        )
-                        daysLeft != null -> StatLine(
-                            iconRes = R.drawable.ic_calendar_24dp,
-                            number = daysLeft.toString(),
-                            suffix = stringResource(R.string.sub_card_days_left_suffix),
-                            color = timeColor,
-                        )
-                        else -> StatLine(
-                            iconRes = R.drawable.ic_calendar_24dp,
-                            number = stringResource(R.string.sub_card_no_expiry),
-                            suffix = "",
-                            color = timeColor,
-                        )
-                    }
-                }
+                // The body is laid out right-to-left in every language: figures first (right), bars
+                // second (left). Each half goes back to the language's own direction inside.
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Min),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(
+                            Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            CompositionLocalProvider(LocalLayoutDirection provides naturalDirection) {
+                                if (unlimited) {
+                                    StatLine(
+                                        iconRes = R.drawable.ic_storage_24dp,
+                                        number = stringResource(R.string.sub_info_unlimited),
+                                        suffix = "",
+                                        color = trafficColor,
+                                    )
+                                } else {
+                                    val (num, unit) = splitTraffic(remainingBytes)
+                                    StatLine(
+                                        iconRes = R.drawable.ic_storage_24dp,
+                                        number = num,
+                                        suffix = stringResource(R.string.sub_card_left_suffix, trafficUnitLabel(unit)),
+                                        color = trafficColor,
+                                    )
+                                }
+                                when {
+                                    expired -> StatLine(
+                                        iconRes = R.drawable.ic_calendar_24dp,
+                                        number = stringResource(R.string.sub_card_expired),
+                                        suffix = "",
+                                        color = ColorStatusBad,
+                                    )
+                                    daysLeft != null -> StatLine(
+                                        iconRes = R.drawable.ic_calendar_24dp,
+                                        number = daysLeft.coerceAtLeast(0L).toString(),
+                                        suffix = stringResource(R.string.sub_card_days_left_suffix),
+                                        color = timeColor,
+                                    )
+                                    else -> StatLine(
+                                        iconRes = R.drawable.ic_calendar_24dp,
+                                        number = stringResource(R.string.sub_card_no_expiry),
+                                        suffix = "",
+                                        color = timeColor,
+                                    )
+                                }
+                            }
+                        }
 
-                Box(
-                    Modifier
-                        .padding(horizontal = 12.dp)
-                        .width(1.dp)
-                        .fillMaxHeight()
-                        .background(scheme.outlineVariant.copy(alpha = 0.8f))
-                )
+                        Box(
+                            Modifier
+                                .padding(horizontal = 12.dp)
+                                .width(1.dp)
+                                .fillMaxHeight()
+                                .background(scheme.outlineVariant.copy(alpha = 0.8f))
+                        )
 
-                Column(
-                    Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    val totalLabel = if (unlimited) {
-                        stringResource(R.string.sub_info_unlimited)
-                    } else {
-                        val (num, unit) = splitTraffic(model.totalBytes)
-                        "$num ${trafficUnitLabel(unit)}"
+                        Column(
+                            Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            CompositionLocalProvider(LocalLayoutDirection provides naturalDirection) {
+                                val totalLabel = if (unlimited) {
+                                    stringResource(R.string.sub_info_unlimited)
+                                } else {
+                                    val (num, unit) = splitTraffic(model.totalBytes)
+                                    "$num ${trafficUnitLabel(unit)}"
+                                }
+                                BarBlock(
+                                    iconRes = R.drawable.ic_bar_chart_24dp,
+                                    label = totalLabel,
+                                    fraction = if (trafficEnded) 1f else trafficFraction,
+                                    fillColor = trafficColor,
+                                    trackColor = trafficColor.copy(alpha = 0.2f),
+                                )
+                                BarBlock(
+                                    iconRes = R.drawable.ic_calendar_24dp,
+                                    label = if (periodDays != null) periodLabel(periodDays) else stringResource(R.string.sub_card_no_expiry),
+                                    fraction = if (timeEnded) 1f else timeFraction,
+                                    fillColor = timeColor,
+                                    trackColor = if (timeEnded) timeColor.copy(alpha = 0.2f) else scheme.onSurface.copy(alpha = 0.1f),
+                                )
+                            }
+                        }
                     }
-                    BarBlock(
-                        iconRes = R.drawable.ic_bar_chart_24dp,
-                        label = totalLabel,
-                        fraction = trafficFraction,
-                        fillColor = trafficColor,
-                        trackColor = trafficColor.copy(alpha = 0.2f),
-                    )
-                    BarBlock(
-                        iconRes = R.drawable.ic_calendar_24dp,
-                        label = if (periodDays != null) periodLabel(periodDays) else stringResource(R.string.sub_card_no_expiry),
-                        fraction = timeFraction,
-                        fillColor = timeColor,
-                        trackColor = scheme.onSurface.copy(alpha = 0.1f),
-                    )
                 }
             }
         }
+    }
+}
+
+/** A config of a subscription with several configs, listed under the subscription's card. */
+@Composable
+internal fun SubscriptionChildRow(
+    row: ServerRowUiModel,
+    isSelected: Boolean,
+    onSelect: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val selectedDescription = if (isSelected) stringResource(R.string.acc_selected_server) else null
+    val delayText = if (row.testDelayMillis == 0L) "" else stringResource(R.string.server_test_delay_value, row.testDelayMillis)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isSelected) scheme.primary.copy(alpha = 0.12f) else Color.Transparent)
+            .semantics {
+                if (selectedDescription != null) stateDescription = selectedDescription
+            }
+            .clickable(onClick = onSelect)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = row.remarks,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+            color = if (isSelected) scheme.primary else scheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (delayText.isNotEmpty()) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = delayText,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (row.testDelayMillis < 0L) ColorStatusBad else scheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** Single-line text that shrinks its font until the whole name fits (down to a minimum size). */
+@Composable
+private fun FitOneLineText(text: String, modifier: Modifier = Modifier) {
+    var fontSize by remember(text) { mutableStateOf(16.sp) }
+    Text(
+        text = text,
+        modifier = modifier,
+        fontSize = fontSize,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
+        onTextLayout = { result ->
+            if (result.hasVisualOverflow && fontSize > 10.sp) {
+                fontSize = (fontSize.value - 0.5f).sp
+            }
+        },
+    )
+}
+
+/** Green/red circle that pulses (a soft ring spreads out of it and fades). */
+@Composable
+private fun PulseDot(color: Color, diameter: Dp) {
+    val transition = rememberInfiniteTransition(label = "statusPulse")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1600, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "statusPulsePhase",
+    )
+    Canvas(Modifier.size(diameter)) {
+        val maxRadius = this.size.minDimension / 2f
+        val coreRadius = maxRadius * (0.52f + 0.06f * sin(phase * 2f * PI.toFloat()))
+        listOf(phase, (phase + 0.5f) % 1f).forEach { p ->
+            drawCircle(
+                color = color.copy(alpha = (1f - p) * 0.45f),
+                radius = coreRadius + (maxRadius - coreRadius) * p,
+            )
+        }
+        drawCircle(color = color, radius = coreRadius)
     }
 }
 
@@ -247,7 +365,7 @@ internal fun SubscriptionServerCard(
 private fun RoundActionButton(iconRes: Int, contentDescription: String, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
-        modifier = Modifier.size(40.dp),
+        modifier = Modifier.size(32.dp),
         shape = CircleShape,
         color = MaterialTheme.colorScheme.surface,
         shadowElevation = 3.dp,
@@ -256,7 +374,7 @@ private fun RoundActionButton(iconRes: Int, contentDescription: String, onClick:
             Icon(
                 painterResource(iconRes),
                 contentDescription,
-                Modifier.size(20.dp),
+                Modifier.size(17.dp),
                 tint = MaterialTheme.colorScheme.onSurface,
             )
         }
@@ -269,7 +387,7 @@ private fun StatLine(iconRes: Int, number: String, suffix: String, color: Color)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier
-                .size(44.dp)
+                .size(34.dp)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
             contentAlignment = Alignment.Center,
@@ -277,14 +395,14 @@ private fun StatLine(iconRes: Int, number: String, suffix: String, color: Color)
             Icon(
                 painterResource(iconRes),
                 contentDescription = null,
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(18.dp),
                 tint = MaterialTheme.colorScheme.onSurface,
             )
         }
         Spacer(Modifier.width(10.dp))
         Text(
             text = number,
-            style = MaterialTheme.typography.headlineSmall,
+            fontSize = 19.sp,
             fontWeight = FontWeight.Bold,
             color = color,
             maxLines = 1,
@@ -292,7 +410,7 @@ private fun StatLine(iconRes: Int, number: String, suffix: String, color: Color)
         if (suffix.isNotEmpty()) {
             Text(
                 text = " $suffix",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -308,7 +426,7 @@ private fun BarBlock(iconRes: Int, label: String, fraction: Float, fillColor: Co
             Text(
                 text = label,
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -316,18 +434,18 @@ private fun BarBlock(iconRes: Int, label: String, fraction: Float, fillColor: Co
             Icon(
                 painterResource(iconRes),
                 contentDescription = null,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(18.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Spacer(Modifier.height(6.dp))
-        // The bar always fills from the left edge, like in the design, whatever the language direction.
+        Spacer(Modifier.height(4.dp))
+        // The bar always fills from the left edge, whatever the language direction.
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(14.dp)
-                    .clip(RoundedCornerShape(7.dp))
+                    .height(10.dp)
+                    .clip(RoundedCornerShape(5.dp))
                     .background(trackColor)
             ) {
                 if (fraction > 0f) {
@@ -335,7 +453,7 @@ private fun BarBlock(iconRes: Int, label: String, fraction: Float, fillColor: Co
                         Modifier
                             .fillMaxHeight()
                             .fillMaxWidth(fraction.coerceIn(0.04f, 1f))
-                            .clip(RoundedCornerShape(7.dp))
+                            .clip(RoundedCornerShape(5.dp))
                             .background(fillColor)
                     )
                 }

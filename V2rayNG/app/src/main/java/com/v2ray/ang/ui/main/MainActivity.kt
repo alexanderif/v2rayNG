@@ -217,7 +217,8 @@ class MainActivity : HelperBaseComponentActivity() {
                 putExtra("createConfigType", createConfigType)
             }
         }.apply {
-            putExtra("subscriptionId", mainViewModel.uiState.value.selectedGroupId)
+            // New configs go to the default group.
+            putExtra("subscriptionId", "")
         }
         profileEditorLauncher.launch(intent)
     }
@@ -271,7 +272,7 @@ class MainActivity : HelperBaseComponentActivity() {
             putExtra("guid", guid)
             putExtra("isRunning", mainViewModel.uiState.value.isRunning)
             putExtra("createConfigType", profile.configType.value)
-            putExtra("subscriptionId", mainViewModel.uiState.value.selectedGroupId)
+            putExtra("subscriptionId", profile.subscriptionId)
         }
         profileEditorLauncher.launch(intent)
     }

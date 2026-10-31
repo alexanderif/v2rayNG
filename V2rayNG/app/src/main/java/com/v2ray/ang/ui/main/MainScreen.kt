@@ -4,34 +4,24 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.grid.LazyGridState
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.ui.compose.LocalDarkTheme
 import com.v2ray.ang.ui.compose.QRCodeDialog
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 @Composable
@@ -46,7 +36,6 @@ fun MainScreen(
     val isRunning = uiState.isRunning
     val displayText = mainViewModel.formatStatus(uiState.status)
     val selectedGuid = uiState.selectedGuid
-    val doubleColumnDisplay = uiState.doubleColumnDisplay
     val confirmRemove = uiState.confirmRemove
     val shareQRCodeBitmap = uiState.shareQRCodeBitmap
 
@@ -69,42 +58,6 @@ fun MainScreen(
         } else {
             onAction(MainAction.RemoveServer(guid))
         }
-    }
-
-    val pagerState = rememberPagerState(
-        initialPage = 0,
-        pageCount = { groups.size.coerceAtLeast(1) }
-    )
-
-    val lazyListStates = remember { mutableStateMapOf<String, LazyListState>() }
-    val lazyGridStates = remember { mutableStateMapOf<String, LazyGridState>() }
-
-    LaunchedEffect(groups) {
-        val validGroupIds = groups.map { it.id }.toSet()
-        lazyListStates.keys.retainAll(validGroupIds)
-        lazyGridStates.keys.retainAll(validGroupIds)
-    }
-
-    LaunchedEffect(groups, uiState.selectedGroupId) {
-        if (groups.isEmpty()) return@LaunchedEffect
-        val selectedIndex = groups.indexOfFirst { it.id == uiState.selectedGroupId }
-            .takeIf { it >= 0 } ?: 0
-        if (!pagerState.isScrollInProgress && pagerState.settledPage != selectedIndex) {
-            pagerState.scrollToPage(selectedIndex)
-        }
-    }
-
-    val latestGroups by rememberUpdatedState(groups)
-
-    LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.settledPage }
-            .distinctUntilChanged()
-            .collect { page ->
-                val currentGroups = latestGroups
-                if (page in currentGroups.indices) {
-                    onAction(MainAction.SelectGroup(currentGroups[page].id))
-                }
-            }
     }
 
     MainDialogs(
@@ -194,68 +147,34 @@ fun MainScreen(
             },
             floatingActionButton = {},
         ) { innerPadding ->
-            val layoutDirection = LocalLayoutDirection.current
-
             if (groups.isNotEmpty()) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
                 ) {
-                    if (groups.size > 1) {
-                        GroupTabBar(
-                            groups = groups,
-                            selectedTabIndex = pagerState.currentPage.coerceIn(0, groups.lastIndex),
-                            mainViewModel = mainViewModel,
-                            onTabClick = { targetIndex ->
-                                scope.launch {
-                                    pagerState.navigateToPageOptimized(
-                                        targetPage = targetIndex,
-                                        animateAdjacentPage = true
-                                    )
-                                }
-                            }
+                    ServerFlatList(
+                        mainViewModel = mainViewModel,
+                        selectedGuid = selectedGuid,
+                        locateTarget = uiState.locateTarget,
+                        searchQuery = searchQuery,
+                        onSelectServer = { guid -> onAction(MainAction.SelectServer(guid)) },
+                        onEditServer = { guid, profile -> onAction(MainAction.EditServer(guid, profile)) },
+                        onShareServer = { guid, profile ->
+                            shareTarget = Triple(guid, profile, false)
+                        },
+                        onRemoveServer = removeServer,
+                        onMoveServer = { groupId, fromIndex, toIndex ->
+                            mainViewModel.moveServer(groupId, fromIndex, toIndex)
+                        },
+                        onLocateHandled = { mainViewModel.onAction(MainAction.LocateHandled) },
+                        contentPadding = PaddingValues(
+                            start = 0.dp,
+                            top = 4.dp,
+                            end = 0.dp,
+                            bottom = 80.dp
                         )
-                    }
-
-                    HorizontalPager(
-                        state = pagerState,
-                        modifier = Modifier.fillMaxSize(),
-                        userScrollEnabled = true,
-                        beyondViewportPageCount = 1,
-                        key = { page -> groups.getOrNull(page)?.id ?: "group-page-$page" }
-                    ) { page ->
-                        val group = groups.getOrNull(page) ?: return@HorizontalPager
-
-                        GroupPagerPage(
-                            groupId = group.id,
-                            mainViewModel = mainViewModel,
-                            selectedGuid = selectedGuid,
-                            locateTarget = uiState.locateTarget,
-                            doubleColumnDisplay = doubleColumnDisplay,
-                            searchQuery = searchQuery,
-                            lazyListStates = lazyListStates,
-                            lazyGridStates = lazyGridStates,
-                            onSelectServer = { guid -> onAction(MainAction.SelectServer(guid)) },
-                            onEditServer = { guid, profile -> onAction(MainAction.EditServer(guid, profile)) },
-                            onShareServer = { guid, profile ->
-                                shareTarget = Triple(guid, profile, false)
-                            },
-                            onMoreServer = { guid, profile ->
-                                shareTarget = Triple(guid, profile, true)
-                            },
-                            onRemoveServer = removeServer,
-                            usageInfo = group.usageInfo,
-                            groupTitle = group.remarks,
-                            onOpenLink = { url -> onAction(MainAction.OpenSubscriptionLink(url)) },
-                            contentPadding = PaddingValues(
-                                start = 0.dp,
-                                top = 0.dp,
-                                end = 0.dp,
-                                bottom = 80.dp
-                            )
-                        )
-                    }
+                    )
                 }
             }
         }

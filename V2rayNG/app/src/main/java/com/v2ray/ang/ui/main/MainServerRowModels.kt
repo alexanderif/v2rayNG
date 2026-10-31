@@ -1,10 +1,12 @@
 package com.v2ray.ang.ui.main
 
+import com.v2ray.ang.dto.GroupMapItem
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.dto.entities.ServersCache
 import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.nullIfBlank
 import com.v2ray.ang.handler.AngConfigManager
+import com.v2ray.ang.util.RemarkCleaner
 
 internal data class ServerRowUiModel(
     val guid: String,
@@ -14,6 +16,12 @@ internal data class ServerRowUiModel(
     val typeDescription: String,
     val testDelayMillis: Long,
     val subscriptionBadge: String,
+)
+
+/** One group of the flat list: the group itself and the servers it holds. */
+internal data class GroupSectionUiModel(
+    val group: GroupMapItem,
+    val state: ServerGroupUiState,
 )
 
 internal data class ServerGroupUiState(
@@ -29,7 +37,8 @@ internal fun buildServerRowUiModel(
     return ServerRowUiModel(
         guid = server.guid,
         profile = profile,
-        remarks = profile.remarks,
+        // Also cleans names stored before the cleaner existed, until the next subscription update.
+        remarks = RemarkCleaner.clean(profile.remarks),
         statistics = profile.description.nullIfBlank()
             ?: AngConfigManager.generateDescription(profile),
         typeDescription = serverProtocolDescription(profile),
