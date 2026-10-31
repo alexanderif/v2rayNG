@@ -17,9 +17,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.v2ray.ang.R
 import com.v2ray.ang.dto.entities.ProfileItem
+import com.v2ray.ang.ui.compose.DeleteConfirmDialog
 import com.v2ray.ang.ui.compose.LocalDarkTheme
 import com.v2ray.ang.ui.compose.QRCodeDialog
 import kotlinx.coroutines.launch
@@ -52,6 +55,8 @@ fun MainScreen(
     }
 
     var shareTarget by remember { mutableStateOf<Triple<String, ProfileItem, Boolean>?>(null) }
+    // (group id, name) of the subscription the bin of its card was pressed for
+    var removeSubscriptionTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
     val removeServer: (String, String) -> Unit = { guid, profileName ->
         if (confirmRemove) {
             showRemoveConfirm = ServerDeleteTarget(guid, profileName)
@@ -74,6 +79,18 @@ fun MainScreen(
         onDismissRemove = { showRemoveConfirm = null },
         onConfirmRemove = { guid -> showRemoveConfirm = null; onAction(MainAction.RemoveServer(guid)) }
     )
+
+    removeSubscriptionTarget?.let { (groupId, name) ->
+        DeleteConfirmDialog(
+            message = stringResource(R.string.confirm_delete_subscription),
+            itemName = name,
+            onConfirm = {
+                removeSubscriptionTarget = null
+                onAction(MainAction.RemoveSubscription(groupId))
+            },
+            onDismiss = { removeSubscriptionTarget = null }
+        )
+    }
 
     if (shareTarget != null) {
         val (guid, profile, more) = shareTarget!!
@@ -164,6 +181,7 @@ fun MainScreen(
                             shareTarget = Triple(guid, profile, false)
                         },
                         onRemoveServer = removeServer,
+                        onRemoveSubscription = { groupId, name -> removeSubscriptionTarget = groupId to name },
                         onMoveServer = { groupId, fromIndex, toIndex ->
                             mainViewModel.moveServer(groupId, fromIndex, toIndex)
                         },

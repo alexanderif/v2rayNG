@@ -33,13 +33,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -47,6 +50,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -56,6 +60,7 @@ import com.v2ray.ang.dto.entities.SubscriptionUsageInfo
 import com.v2ray.ang.handler.MmkvManager
 import java.util.Locale
 import kotlin.math.PI
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 private const val MILLIS_PER_DAY = 86_400_000L
@@ -96,7 +101,9 @@ internal fun SubscriptionServerCard(
 
     val unlimited = model == null || model.totalBytes <= 0L
     val remainingBytes = if (model == null) 0L else (model.totalBytes - model.usedBytes).coerceAtLeast(0L)
-    val trafficFraction = if (unlimited || model == null) 1f else remainingBytes.toFloat() / model.totalBytes.toFloat()
+    // The bars fill up as the account is used: empty when new, full when traffic / time has ended.
+    val trafficFraction = if (unlimited || model == null) 0f
+    else (1f - remainingBytes.toFloat() / model.totalBytes.toFloat()).coerceIn(0f, 1f)
 
     val expired = model?.expired == true
     val daysLeft: Long? = model?.expireMillis?.let { ((it - now) + MILLIS_PER_DAY - 1) / MILLIS_PER_DAY }
@@ -104,10 +111,10 @@ internal fun SubscriptionServerCard(
         remember(groupId, left) { resolveSubscriptionPeriodDays(groupId, left.toInt()) }
     }
     val timeFraction = when {
-        expired -> 0f
+        expired -> 1f
         daysLeft != null && periodDays != null && periodDays > 0 ->
-            (daysLeft.toFloat() / periodDays.toFloat()).coerceIn(0f, 1f)
-        else -> 1f
+            (1f - daysLeft.toFloat() / periodDays.toFloat()).coerceIn(0f, 1f)
+        else -> 0f
     }
 
     // A bar that has reached its end turns red, and so does the status circle.
@@ -116,6 +123,14 @@ internal fun SubscriptionServerCard(
     val healthy = !trafficEnded && !timeEnded
     val trafficColor = if (trafficEnded) ColorStatusBad else ColorTraffic
     val timeColor = if (timeEnded) ColorStatusBad else ColorTime
+
+    // Why the account is cut off; written in front of the name and scrolled because it is long.
+    val endedCause: String? = when {
+        trafficEnded && timeEnded -> stringResource(R.string.sub_card_ended_both)
+        trafficEnded -> stringResource(R.string.sub_card_ended_traffic)
+        timeEnded -> stringResource(R.string.sub_card_ended_time)
+        else -> null
+    }
 
     val selectedDescription = if (isSelected) stringResource(R.string.acc_selected_server) else null
     val naturalDirection = LocalLayoutDirection.current
@@ -141,10 +156,17 @@ internal fun SubscriptionServerCard(
                     diameter = 22.dp,
                 )
                 Spacer(Modifier.width(12.dp))
-                FitOneLineText(
-                    text = title,
-                    modifier = Modifier.weight(1f),
-                )
+                if (endedCause != null) {
+                    MarqueeLtrText(
+                        text = "$endedCause - $title",
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    FitOneLineText(
+                        text = title,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 if (onShare != null) {
                     Spacer(Modifier.width(8.dp))
                     RoundActionButton(
@@ -333,6 +355,59 @@ private fun FitOneLineText(text: String, modifier: Modifier = Modifier) {
             }
         },
     )
+}
+
+/**
+ * Single-line text that moves from left to right and starts again, so a long text can be read in
+ * one line. The direction does not depend on the language. A text that fits stays still.
+ */
+@Composable
+private fun MarqueeLtrText(text: String, modifier: Modifier = Modifier) {
+    key(text) {
+        val transition = rememberInfiniteTransition(label = "titleMarquee")
+        val durationMillis = (4000 + text.length * 160).coerceAtMost(20000)
+        val progress by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = durationMillis, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "titleMarqueeProgress",
+        )
+        Layout(
+            content = {
+                Text(
+                    text = text,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            },
+            modifier = modifier.clipToBounds(),
+        ) { measurables, constraints ->
+            val placeable = measurables.first().measure(
+                Constraints(
+                    minWidth = 0,
+                    maxWidth = Constraints.Infinity,
+                    minHeight = 0,
+                    maxHeight = constraints.maxHeight,
+                )
+            )
+            val width = if (constraints.hasBoundedWidth) constraints.maxWidth else placeable.width
+            val height = placeable.height.coerceIn(constraints.minHeight, constraints.maxHeight)
+            layout(width, height) {
+                // From just outside the left edge to just outside the right edge, then again.
+                val x = if (placeable.width <= width) {
+                    0
+                } else {
+                    (-placeable.width + (width + placeable.width) * progress).roundToInt()
+                }
+                placeable.place(x, 0)
+            }
+        }
+    }
 }
 
 /** Green/red circle that pulses (a soft ring spreads out of it and fades). */

@@ -21,6 +21,7 @@ import com.v2ray.ang.extension.moveItem
 import com.v2ray.ang.handler.SubscriptionInfoParser
 import com.v2ray.ang.ui.base.BaseViewModel
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -324,6 +325,7 @@ class MainViewModel(
             is MainAction.SelectGroup -> subscriptionIdChanged(action.groupId)
             is MainAction.SelectServer -> updateSelectedGuid(action.guid)
             is MainAction.RemoveServer -> removeServerAndRefresh(action.guid)
+            is MainAction.RemoveSubscription -> removeSubscriptionAndRefresh(action.groupId)
             is MainAction.Search -> filterConfig(action.query)
             is MainAction.ImportBatchConfig -> importBatchConfig(action.configText)
             MainAction.LocateHandled -> consumeLocateTarget()
@@ -849,6 +851,26 @@ class MainViewModel(
             dataSource.removeServer(guid)
             cacheMutex.withLock { groupDataCache.clear() }
             setupGroupTab(forceRefresh = true).join()
+        }
+    }
+
+    /** Deletes a whole subscription (its card) together with all of its configs. */
+    fun removeSubscriptionAndRefresh(groupId: String) {
+        if (groupId.isEmpty() || groupId == AppConfig.DEFAULT_SUBSCRIPTION_ID) return
+        if (uiState.value.isRunning) {
+            // The connected config must not disappear under a running connection.
+            val selectedGroup = uiState.value.selectedGuid
+                ?.let { dataSource.decodeServerConfig(it)?.subscriptionId }
+            if (selectedGroup == groupId) {
+                toast(R.string.toast_action_not_allowed)
+                return
+            }
+        }
+        viewModelScope.launch(ioDispatcher) {
+            SettingsManager.removeSubscriptionWithDefault(groupId)
+            cacheMutex.withLock { groupDataCache.clear() }
+            setupGroupTab(forceRefresh = true).join()
+            refreshSelectedGuid()
         }
     }
 

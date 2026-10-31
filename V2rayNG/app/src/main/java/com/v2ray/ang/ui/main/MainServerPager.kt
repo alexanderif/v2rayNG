@@ -85,6 +85,7 @@ private class ServerRowActions(
     val edit: (String, ProfileItem) -> Unit,
     val share: (String, ProfileItem) -> Unit,
     val remove: (String, String) -> Unit,
+    val removeSubscription: (String, String) -> Unit,
 )
 
 private fun buildEntries(
@@ -123,6 +124,7 @@ fun ServerFlatList(
     onEditServer: (String, ProfileItem) -> Unit,
     onShareServer: (String, ProfileItem) -> Unit,
     onRemoveServer: (String, String) -> Unit,
+    onRemoveSubscription: (String, String) -> Unit,
     onMoveServer: (String, Int, Int) -> Unit,
     onLocateHandled: () -> Unit,
     contentPadding: PaddingValues,
@@ -143,12 +145,13 @@ fun ServerFlatList(
     }
     val currentPositions by rememberUpdatedState(positions)
 
-    val actions = remember(onSelectServer, onEditServer, onShareServer, onRemoveServer) {
+    val actions = remember(onSelectServer, onEditServer, onShareServer, onRemoveServer, onRemoveSubscription) {
         ServerRowActions(
             select = onSelectServer,
             edit = onEditServer,
             share = onShareServer,
             remove = onRemoveServer,
+            removeSubscription = onRemoveSubscription,
         )
     }
 
@@ -190,7 +193,8 @@ fun ServerFlatList(
                     val shown = entry.shown
                     val onShare: (() -> Unit)? = shown?.let { row -> { actions.share(row.guid, row.profile) } }
                     val onEdit: (() -> Unit)? = shown?.let { row -> { actions.edit(row.guid, row.profile) } }
-                    val onDelete: (() -> Unit)? = shown?.let { row -> { actions.remove(row.guid, row.remarks) } }
+                    // The bin removes the whole subscription, also when it has no config (any more).
+                    val onDelete: () -> Unit = { actions.removeSubscription(entry.group.id, entry.group.remarks) }
                     SubscriptionServerCard(
                         title = shown?.remarks ?: entry.group.remarks,
                         groupId = entry.group.id,
