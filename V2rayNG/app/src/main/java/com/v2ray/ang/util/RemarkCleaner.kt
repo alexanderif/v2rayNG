@@ -27,12 +27,19 @@ object RemarkCleaner {
             ")(?![\\p{L}\\d])" + MARKERS + ")+",
         RegexOption.IGNORE_CASE
     )
+    // A panel marks an account it has cut off with a prefix like "⛔N/A-". The app shows its own
+    // status (circle and cause) instead, so the marker is removed; this also fixes a renewed account.
+    private val statusMarker = Regex(
+        "^(?:\\s|⛔|🚫|❌|⭕|\\uFE0F)*N/A(?![\\p{L}\\d])" + SEPARATORS + "*",
+        RegexOption.IGNORE_CASE
+    )
     private val edgeSeparators = Regex("^$SEPARATORS+|$SEPARATORS+$")
 
-    /** Returns [remarks] without traffic/time segments; the original text if nothing would be left. */
+    /** Returns [remarks] without the panel's N/A marker and traffic/time segments; the original text if nothing would be left. */
     fun clean(remarks: String): String {
         if (remarks.isEmpty()) return remarks
-        val cleaned = usageSegments.replace(remarks, "").replace(edgeSeparators, "")
+        val withoutMarker = statusMarker.replace(remarks, "")
+        val cleaned = usageSegments.replace(withoutMarker, "").replace(edgeSeparators, "")
         return cleaned.ifBlank { remarks }
     }
 }
