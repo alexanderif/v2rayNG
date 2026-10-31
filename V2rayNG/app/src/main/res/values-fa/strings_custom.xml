@@ -18,4 +18,5 @@
     <string name="sub_period_year_1">یک ساله</string>
     <string name="title_pref_update_subscriptions_on_launch">به‌روزرسانی ساب‌ها هنگام ورود به برنامه</string>
     <string name="summary_pref_update_subscriptions_on_launch">با هر بار باز شدن برنامه، لینک همه اشتراک‌ها به‌روز می‌شود</string>
+    <string name="sub_url_is_config_link">این یک لینک کانفیگ (vless/vmess/trojan ...) است، نه لینک ساب. آن را با «وارد کردن از کلیپ‌بورد» اضافه کنید.</string>
 </resources>
