@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+    <string name="sub_card_left_suffix">%s left</string>
+    <string name="sub_card_days_left_suffix">days left</string>
+    <string name="sub_card_expired">Expired</string>
+    <string name="sub_card_no_expiry">No expiry</string>
+    <string name="sub_unit_b">B</string>
+    <string name="sub_unit_kb">KB</string>
+    <string name="sub_unit_mb">MB</string>
+    <string name="sub_unit_gb">GB</string>
+    <string name="sub_unit_tb">TB</string>
+    <string name="sub_period_days">%d days</string>
+    <string name="sub_period_month_1">1 month</string>
+    <string name="sub_period_month_2">2 months</string>
+    <string name="sub_period_month_3">3 months</string>
+    <string name="sub_period_month_4">4 months</string>
+    <string name="sub_period_month_6">6 months</string>
+    <string name="sub_period_year_1">1 year</string>
+    <string name="title_pref_update_subscriptions_on_launch">Update subscriptions on app launch</string>
+    <string name="summary_pref_update_subscriptions_on_launch">Refresh all subscription links every time the app is opened</string>
+</resources>
