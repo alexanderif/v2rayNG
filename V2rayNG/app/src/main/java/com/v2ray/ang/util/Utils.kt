@@ -415,6 +415,16 @@ object Utils {
     }
 
     /**
+     * A subscription link is always an http(s) URL. Links such as vless://, vmess://, trojan:// or
+     * ss:// are single configs and must never be treated as a subscription.
+     */
+    fun hasHttpScheme(value: String?): Boolean {
+        val trimmed = value?.trim().orEmpty()
+        return trimmed.startsWith("http://", ignoreCase = true) ||
+                trimmed.startsWith("https://", ignoreCase = true)
+    }
+
+    /**
      * Check if a string is a valid subscription URL.
      *
      * @param value The string to check.
